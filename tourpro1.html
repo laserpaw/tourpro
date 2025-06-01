@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Homas Tour Pro Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    .team-block { margin-bottom: 20px; padding: 10px; border: 1px solid #ccc; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    input[type="text"], input[type="number"], input[type="color"] { width: 80px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Homas Tour Pro Tracker</h1>
+
+  <div id="setupSection">
+    <h2>Setup Teams</h2>
+    <div id="teamsContainer"></div>
+    <button onclick="addTeam()">Add Team</button>
+    <button onclick="startGame()">Start Game</button>
+  </div>
+
+  <div id="gameSection" class="hidden">
+    <h2>Stage:
+      <select id="stageSelector" onchange="selectStage(this.value)"></select>
+    </h2>
+    <button onclick="addStage()">+ Add Stage</button>
+    <button onclick="document.getElementById('fileInput').click()">⬆ Import</button>
+    <button onclick="exportGame()">⬇ Export</button>
+    <button onclick="toggleOverall()">📊 Show Overall</button>
+    <input type="file" id="fileInput" style="display:none;" onchange="importGame(event)" />
+
+    <table>
+      <thead>
+        <tr>
+          <th>Rider</th><th>Team</th><th>Role</th><th>Time</th><th>Points</th><th>Mountains</th>
+        </tr>
+      </thead>
+      <tbody id="scoreTable"></tbody>
+    </table>
+  </div>
+
+  <div id="overallSection" class="hidden">
+    <h2>Overall Results</h2>
+    <button onclick="toggleOverall()">🔙 Back to Stage</button>
+    <button onclick="sortOverall('time')">Sort by GC</button>
+    <button onclick="sortOverall('points')">Sort by Points</button>
+    <button onclick="sortOverall('mountain')">Sort by Mountains</button>
+    <table>
+      <thead>
+        <tr>
+          <th>Rider</th><th>Team</th><th>Role</th><th>Total Time</th><th>Total Points</th><th>Total Mountains</th><th>Jersey</th></tr>
+      </thead>
+      <tbody id="overallTable"></tbody>
+    </table>
+  </div>
+
+  <script>
+    const roles = ["Leader", "Allrounder", "Sprinter", "Climber"];
+    let teams = [];
+    let stages = [];
+    let currentStage = 0;
+    let overallSortKey = 'time';
+
+    function addTeam() {
+      const div = document.createElement("div");
+      div.className = "team-block";
+      div.innerHTML = '<input placeholder="Team Name" class="teamName"> ' +
+                      '<input type="color" class="teamColor"><br>' +
+        roles.map(r => `<input placeholder="${r}" data-role="${r}" class="riderName"><br>`).join('');
+      document.getElementById("teamsContainer").appendChild(div);
+    }
+
+    function startGame() {
+  loadGame();
+      teams = [];
+      document.querySelectorAll(".team-block").forEach(block => {
+        const teamName = block.querySelector(".teamName").value;
+        const teamColor = block.querySelector(".teamColor").value;
+        block.querySelectorAll(".riderName").forEach(input => {
+          teams.push({ name: input.value, team: teamName, color: teamColor, role: input.dataset.role });
+        });
+      });
+      stages = [createStage()];
+      currentStage = 0;
+      updateStageSelector();
+      document.getElementById("setupSection").classList.add("hidden");
+      document.getElementById("gameSection").classList.remove("hidden");
+      renderStage();
+    }
+
+    function createStage() {
+      return {
+        scores: teams.map(t => ({
+          ...t,
+          time: "0:00",
+          points: 0,
+          mountain: 0,
+          totalSeconds: 0
+        }))
+      };
+    }
+
+    function addStage() {
+      stages.push(createStage());
+      currentStage = stages.length - 1;
+      updateStageSelector();
+      renderStage();
+    }
+
+    function updateStageSelector() {
+      const selector = document.getElementById("stageSelector");
+      selector.innerHTML = stages.map((_, i) => `<option value="${i}" ${i === currentStage ? "selected" : ""}>Stage ${i + 1}</option>`).join('');
+    }
+
+    function selectStage(index) {
+      currentStage = parseInt(index);
+      renderStage();
+    }
+
+    function formatTime(seconds) {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+      return h > 0 ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}` : `${m}:${s.toString().padStart(2, '0')}`;
+    }
+
+    function parseTime(str) {
+      const parts = str.split(":").map(Number);
+      if (parts.length === 2) return parts[0] * 60 + parts[1];
+      if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+      return 0;
+    }
+
+    function updateTime(index, value) {
+      stages[currentStage].scores[index].time = value;
+      stages[currentStage].scores[index].totalSeconds = parseTime(value);
+      renderStage();
+    }
+
+    function updatePoints(index, value) {
+      stages[currentStage].scores[index].points = parseInt(value) || 0;
+      renderStage();
+    }
+
+    function updateMountain(index, value) {
+      stages[currentStage].scores[index].mountain = parseInt(value) || 0;
+      renderStage();
+    }
+
+    function toggleOverall() {
+      const overallSection = document.getElementById("overallSection");
+      const gameSection = document.getElementById("gameSection");
+      if (overallSection.classList.contains("hidden")) {
+        renderOverall();
+      }
+      overallSection.classList.toggle("hidden");
+      gameSection.classList.toggle("hidden");
+    }
+
+    function renderStage() {
+  saveGame();
+      const tbody = document.getElementById("scoreTable");
+      const scores = stages[currentStage].scores;
+      tbody.innerHTML = "";
+      scores.forEach((r, i) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${r.name}</td>
+          <td style="color:${r.color}">${r.team}</td>
+          <td>${r.role}</td>
+          <td><input value="${r.time}" onchange="updateTime(${i}, this.value)"></td>
+          <td><input type="number" value="${r.points}" onchange="updatePoints(${i}, this.value)"></td>
+          <td><input type="number" value="${r.mountain}" onchange="updateMountain(${i}, this.value)"></td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+
+    function renderOverall() {
+      let leaderTime = Infinity;
+      const overall = {};
+      stages.forEach(stage => {
+        stage.scores.forEach(r => {
+          if (!overall[r.name]) {
+            overall[r.name] = { ...r };
+          } else {
+            overall[r.name].totalSeconds += r.totalSeconds;
+            overall[r.name].points += r.points;
+            overall[r.name].mountain += r.mountain;
+          }
+        });
+      });
+      const rows = Object.values(overall);
+      const minTime = Math.min(...rows.map(r => r.totalSeconds));
+      const maxPoints = Math.max(...rows.map(r => r.points));
+      const maxMountain = Math.max(...rows.map(r => r.mountain));
+      rows.forEach(r => {
+        r.jersey = "";
+        if (r.totalSeconds < leaderTime) leaderTime = r.totalSeconds;
+      });
+
+      rows.forEach(r => {
+        if (r.totalSeconds === leaderTime) r.jersey += "🟡";
+        if (r.points === maxPoints && r.points > 0) r.jersey += " 🟢";
+        if (r.mountain === maxMountain && r.mountain > 0) r.jersey += " 🔴";
+        r.gap = r.totalSeconds - leaderTime;
+      });
+
+      if (overallSortKey === 'time') rows.sort((a, b) => a.totalSeconds - b.totalSeconds);
+      if (overallSortKey === 'points') rows.sort((a, b) => b.points - a.points);
+      if (overallSortKey === 'mountain') rows.sort((a, b) => b.mountain - a.mountain);
+
+      const tbody = document.getElementById("overallTable");
+      tbody.innerHTML = "";
+      rows.forEach(r => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${r.name}</td>
+          <td style="color:${r.color}">${r.team}</td>
+          <td>${r.role}</td>
+          <td>${formatTime(r.totalSeconds)}</td>
+          <td>${r.points}</td>
+          <td>${r.mountain}</td>
+          <td>${r.jersey}${r.gap > 0 ? ` (+${formatTime(r.gap)})` : ''}</td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+
+    function sortOverall(key) {
+  overallSortKey = key;
+  renderOverall();
+}
+
+function saveGame() {
+  const data = { teams, stages };
+  localStorage.setItem("htp_save", JSON.stringify(data));
+}
+
+function loadGame() {
+  const saved = localStorage.getItem("htp_save");
+  if (!saved) return;
+  try {
+    const data = JSON.parse(saved);
+    if (!data.teams || !data.stages) throw "Invalid local save";
+    teams = data.teams;
+    stages = data.stages;
+    currentStage = 0;
+    document.getElementById("setupSection").classList.add("hidden");
+    document.getElementById("gameSection").classList.remove("hidden");
+    updateStageSelector();
+    renderStage();
+  } catch (e) {
+    console.warn("Corrupted save", e);
+  }
+}
+
+function exportGame() {
+  const data = { teams, stages };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.style.display = "none";
+  a.href = url;
+  a.download = `htp_game_${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  setTimeout(() => URL.revokeObjectURL(url), 100);
+}
+
+function importGame(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.teams || !data.stages) throw "Invalid file format";
+      teams = data.teams;
+      stages = data.stages;
+      currentStage = 0;
+      document.getElementById("setupSection").classList.add("hidden");
+      document.getElementById("gameSection").classList.remove("hidden");
+      updateStageSelector();
+      renderStage();
+    } catch (err) {
+      alert("Failed to load game data.");
+    }
+  };
+  reader.readAsText(file);
+}
+  
+window.addEventListener('beforeunload', function (e) {
+  const message = "Are you sure you want to leave? You may lose unsaved changes. Please export your game first!";
+  e.preventDefault();
+  e.returnValue = message;
+  return message;
+});
+</script>
+</body>
+</html>
